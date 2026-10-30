@@ -83,6 +83,51 @@ def check_database_url_shape() -> bool:
     return True
 
 
+#: URI 의 사용자 정보 칸에 그대로 쓰면 주소가 잘못 읽히는 글자들.
+#: 비밀번호에 들어 있으면 퍼센트 인코딩해야 한다 (RFC 3986).
+UNSAFE_IN_PASSWORD = "@/?#[] "
+
+
+def check_password_encoding() -> bool:
+    """비밀번호에 인코딩하지 않은 특수문자가 있는지 본다.
+
+    Supabase 가 만들어 주는 비밀번호에는 특수문자가 섞일 수 있다. 그대로
+    주소에 붙이면 libpq 가 주소를 잘못 읽어, 비밀번호가 맞는데도 연결이
+    실패한다. 원인을 찾기 어려운 흔한 함정이라 미리 알려 준다.
+    """
+    from urllib.parse import quote
+
+    from app import config
+
+    print("\n2-1. 비밀번호 특수문자")
+    url = config.get_secret("DATABASE_URL") or ""
+
+    if "://" not in url or "@" not in url:
+        print(f"   {WARN} 주소 모양을 알아보지 못해 건너뜁니다")
+        return True
+
+    userinfo = url.split("://", 1)[1].rsplit("@", 1)[0]
+    password = userinfo.split(":", 1)[1] if ":" in userinfo else ""
+
+    if not password:
+        print(f"   {WARN} 주소에 비밀번호가 없습니다")
+        return True
+
+    bad = sorted({ch for ch in password if ch in UNSAFE_IN_PASSWORD})
+    if not bad:
+        print(f"   {GOOD} 그대로 써도 되는 비밀번호입니다")
+        return True
+
+    print(f"   {BAD} 비밀번호에 그대로 쓰면 안 되는 글자가 있습니다: {' '.join(bad)}")
+    print("          아래처럼 바꿔 적으세요 (퍼센트 인코딩).")
+    for ch in bad:
+        label = "빈칸" if ch == " " else ch
+        print(f"            {label}  →  {quote(ch, safe='')}")
+    print("          또는 Supabase 에서 영문과 숫자로만 된 비밀번호로 재설정하세요")
+    print("          (Project Settings → Database → Reset database password).")
+    return False
+
+
 def check_database() -> bool:
     print("\n3. DB 연결")
     try:
@@ -178,11 +223,12 @@ def main() -> int:
         return 1
 
     shape_ok = check_database_url_shape()
+    encoding_ok = check_password_encoding()
     db_ok = check_database()
     models_ok = check_models()
 
     print("\n" + "=" * 46)
-    if shape_ok and db_ok and models_ok:
+    if shape_ok and encoding_ok and db_ok and models_ok:
         print("모두 좋습니다. 앱을 띄워 볼 수 있습니다:")
         print("  python -m streamlit run streamlit_app.py")
         return 0
