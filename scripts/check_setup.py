@@ -88,6 +88,35 @@ def check_database_url_shape() -> bool:
 UNSAFE_IN_PASSWORD = "@/?#[] "
 
 
+def password_encoding_problem(password: str) -> list[str] | None:
+    """비밀번호에 그대로 쓰면 안 되는 글자가 있으면 안내 줄을 돌려준다.
+
+    안내에는 비밀번호에 대한 어떤 것도 담지 않는다. 어느 글자가 걸렸는지 적으면
+    그만큼 비밀번호가 새어 나가고, 공고 6.3절 8번의 "코드가 이 값들을 출력하게
+    되어 있음"에 걸린다 (-3점). 그래서 걸리는 글자 전체의 인코딩 표를 그대로
+    보여 주고, 몇 글자가 걸렸는지도 말하지 않는다.
+
+    tests/test_check_setup.py 가 서로 다른 비밀번호에 대해 안내가 같은지 확인한다.
+    """
+    from urllib.parse import quote
+
+    if not any(ch in UNSAFE_IN_PASSWORD for ch in password):
+        return None
+
+    lines = [
+        "비밀번호에 그대로 쓰면 안 되는 글자가 있습니다.",
+        "아래 표대로 바꿔 적으세요 (퍼센트 인코딩).",
+    ]
+    for ch in UNSAFE_IN_PASSWORD:
+        label = "빈칸" if ch == " " else ch
+        lines.append(f"  {label}  →  {quote(ch, safe='')}")
+    lines.append(
+        "또는 Supabase 에서 영문과 숫자로만 된 비밀번호로 재설정하세요"
+    )
+    lines.append("(Project Settings → Database → Reset database password).")
+    return lines
+
+
 def check_password_encoding() -> bool:
     """비밀번호에 인코딩하지 않은 특수문자가 있는지 본다.
 
@@ -95,8 +124,6 @@ def check_password_encoding() -> bool:
     주소에 붙이면 libpq 가 주소를 잘못 읽어, 비밀번호가 맞는데도 연결이
     실패한다. 원인을 찾기 어려운 흔한 함정이라 미리 알려 준다.
     """
-    from urllib.parse import quote
-
     from app import config
 
     print("\n2-1. 비밀번호 특수문자")
@@ -113,18 +140,14 @@ def check_password_encoding() -> bool:
         print(f"   {WARN} 주소에 비밀번호가 없습니다")
         return True
 
-    bad = sorted({ch for ch in password if ch in UNSAFE_IN_PASSWORD})
-    if not bad:
+    problem = password_encoding_problem(password)
+    if problem is None:
         print(f"   {GOOD} 그대로 써도 되는 비밀번호입니다")
         return True
 
-    print(f"   {BAD} 비밀번호에 그대로 쓰면 안 되는 글자가 있습니다: {' '.join(bad)}")
-    print("          아래처럼 바꿔 적으세요 (퍼센트 인코딩).")
-    for ch in bad:
-        label = "빈칸" if ch == " " else ch
-        print(f"            {label}  →  {quote(ch, safe='')}")
-    print("          또는 Supabase 에서 영문과 숫자로만 된 비밀번호로 재설정하세요")
-    print("          (Project Settings → Database → Reset database password).")
+    print(f"   {BAD} {problem[0]}")
+    for line in problem[1:]:
+        print(f"          {line}")
     return False
 
 
