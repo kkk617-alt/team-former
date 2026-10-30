@@ -57,16 +57,40 @@ def schema_applied():
 
 @pytest.fixture
 def store(schema_applied):
-    """쉬움 명단으로 초기화한 PgStore. 동작마다 트랜잭션을 새로 연다."""
+    """쉬움 명단으로 초기화한 PgStore. 동작마다 트랜잭션을 새로 연다.
+
+    이 검사는 관리자 비밀번호를 검사용 값으로 바꿔 쓰므로, 끝나면 원래 해시로
+    되돌린다. 되돌리지 않으면 같은 DB 를 쓰는 배포한 앱의 관리자 비밀번호가
+    바뀐 채로 남는다. 배포한 앱은 시작할 때 한 번만 관리자 계정을 손보므로
+    스스로 고치지 못하고, 채점 기간에 그런 일이 생기면 공고 6.3절 17번에 따라
+    시나리오 점수가 0점이 된다.
+    """
     from app import repo
+
+    with repo.open_store() as s:
+        original_admin_hash = s.password_hash("admin")
 
     students = parse_roster((FIXTURES / "쉬움.csv").read_bytes())
     with repo.open_store() as s:
         s.ensure_admin(auth.hash_password(ADMIN_PASSWORD))
         s.replace_roster(students, 3, auth.hash_password(auth.STUDENT_PASSWORD))
 
-    with repo.open_store() as s:
-        yield s
+    try:
+        with repo.open_store() as s:
+            yield s
+    finally:
+        if original_admin_hash:
+            with repo.open_store() as s:
+                _restore_admin_hash(s, original_admin_hash)
+
+
+def _restore_admin_hash(store, password_hash: str) -> None:
+    """관리자 비밀번호 해시를 원래 값으로 되돌린다."""
+    with store._conn.cursor() as cur:  # noqa: SLF001
+        cur.execute(
+            "update tf_students set password_hash = %s where student_no = 'admin'",
+            (password_hash,),
+        )
 
 
 def no(store, label: str) -> str:
