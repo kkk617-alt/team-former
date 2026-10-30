@@ -1,0 +1,25 @@
+# 비밀 값 — 절대 커밋하지 않음 (공고 4.1절, 6.3절 7번 -3점)
+.env
+.env.*
+!.env.example
+*.env
+secrets.toml
+.streamlit/secrets.toml
+
+# 파이썬
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# 운영체제 / 편집기
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 제출용 압축 파일
+*.zip

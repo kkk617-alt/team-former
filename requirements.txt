@@ -1,0 +1,10 @@
+# Streamlit Community Cloud 가 이 파일을 보고 패키지를 설치합니다.
+#
+# streamlit >= 1.42 가 필요합니다.
+#   - st.container(key=...)      공고 2.7절이 요구하는 표시 영역 이름
+#   - st.fragment(run_every=...) 3장 "다른 사람의 변경 보기" 의 어려운 해결
+streamlit>=1.42,<2
+psycopg2-binary>=2.9,<3
+bcrypt>=4.0,<6
+requests>=2.31,<3
+python-dotenv>=1.0,<2
