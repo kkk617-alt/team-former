@@ -171,6 +171,15 @@ cp .env.example .env
 Supabase 대시보드의 SQL Editor 에 [`schema.sql`](schema.sql) 을 붙여 넣어도 된다.
 여러 번 실행해도 안전하다.
 
+설정이 제대로 되었는지 한 번에 점검한다.
+
+```bash
+.venv/Scripts/python.exe scripts/check_setup.py
+```
+
+비밀 값이 있는지, DB 주소가 풀러 주소인지(직결 주소면 경고한다), `tf_` 테이블이
+다 있는지, 고른 모델 3개를 지금 쓸 수 있는지 알려 준다. 값 자체는 출력하지 않는다.
+
 ### 5) 로컬에서 돌려 보기
 
 ```bash
@@ -270,6 +279,7 @@ app/
   ui/                       화면 (keys.py 에 공고 2.7절의 key)
 schema.sql                  DDL
 scripts/apply_schema.py     스키마 적용
+scripts/check_setup.py      설정 점검 (비밀 값, DB, 모델)
 scripts/keepalive.py        DB 깨우기
 fixtures/                   연습용 명단 CSV 3개
 tests/                      테스트

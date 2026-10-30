@@ -15,6 +15,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# 윈도우 콘솔의 기본 인코딩은 cp949 라서 한글이 깨져 보인다. UTF-8 로 맞춘다.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
