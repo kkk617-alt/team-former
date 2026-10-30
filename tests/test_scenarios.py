@@ -357,6 +357,22 @@ def test_blocked_application_is_not_recorded(medium_run):
     assert r.apply("학생2(PL;TT)", 2) == "승인"
 
 
+def test_losing_the_last_slot_is_recorded_as_a_rejection(easy_run):
+    """유일성 제약에 막힌 승인은 거절로 기록된다 (공고 3장).
+
+    학생4 가 팀1 에 지원해 대기하는 동안 다른 경로로 팀2 에 들어간 상황을 만든다.
+    승인 직전 재검사는 팀1 만 보므로 통과하지만, 한 학생은 한 팀에만 속할 수
+    있으므로 저장이 막힌다.
+    """
+    r = easy_run
+    assert r.apply("학생1(PL;RW)", 1) == "승인"
+    assert r.apply("학생4(WP;FD)", 1) == "대기"
+
+    r.store.add_member(2, r.no("학생4(WP;FD)"))
+
+    assert r.vote("학생1(PL;RW)", "학생4(WP;FD)", AGREE) == "거절"
+
+
 def test_solver_reports_failure_when_no_valid_assignment_exists():
     """규칙을 지키는 배정이 없으면 None 을 돌려준다 (공고 2.5절 8항)."""
     rows = [

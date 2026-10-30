@@ -145,3 +145,16 @@ class Store(Protocol):
     def set_setting(self, key: str, value: str) -> None: ...
 
     def is_closed(self) -> bool: ...
+
+    # --- AI 호출 기록 -----------------------------------------------------
+    def log_ai_attempts(self, attempts: "Sequence[Any]") -> None:
+        """오픈라우터 호출 기록을 남긴다.
+
+        README 7.1절 5항의 실패 사례를 꾸며 내지 않고 실제 기록으로 제시하기
+        위한 것이다 (공고 6.3절 20번). attempts 는 app.ai.AiAttempt 의 목록이다.
+        """
+        ...
+
+    def recent_ai_logs(self, limit: int = 20) -> list[tuple]:
+        """최근 호출 기록. (created_at, attempt_no, model, status, elapsed_ms, detail)"""
+        ...

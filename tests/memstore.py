@@ -32,6 +32,7 @@ class InMemoryStore:
         self._applications: dict[int, Application] = {}
         self._votes: dict[tuple[int, str], str] = {}
         self._settings: dict[str, str] = {}
+        self._ai_logs: list[tuple] = []
         self._next_app_id = itertools.count(1)
         self._clock = itertools.count(1)
 
@@ -185,3 +186,20 @@ class InMemoryStore:
 
     def is_closed(self) -> bool:
         return self._settings.get("closed") == "1"
+
+    # --- AI 호출 기록 -----------------------------------------------------
+    def log_ai_attempts(self, attempts) -> None:
+        for attempt in attempts:
+            self._ai_logs.append(
+                (
+                    next(self._clock),
+                    attempt.attempt_no,
+                    attempt.model,
+                    attempt.status,
+                    attempt.elapsed_ms,
+                    attempt.detail,
+                )
+            )
+
+    def recent_ai_logs(self, limit: int = 20) -> list[tuple]:
+        return list(reversed(self._ai_logs))[:limit]

@@ -257,6 +257,14 @@ class PgStore:
             if free is None:
                 raise SlotTaken(f"팀{team_no} 에 빈 자리가 없음")
 
+            # 저장점을 두고 넣는다.
+            #
+            # PostgreSQL 은 제약 위반이 나면 트랜잭션 전체를 중단 상태로 만들고,
+            # 그 뒤의 모든 질의가 InFailedSqlTransaction 으로 실패한다. 그런데
+            # flow.py 는 이 예외를 잡은 다음 그 지원을 '거절' 로 바꾸는 질의를
+            # 한다. 저장점으로 되돌리지 않으면 그 질의가 죽어, 먼저 도착한
+            # 학생만 기록하는 처리 자체가 실패한다.
+            cur.execute("savepoint tf_add_member")
             try:
                 cur.execute(
                     """
@@ -266,7 +274,9 @@ class PgStore:
                     (team_id, free, student_id),
                 )
             except pg_errors.UniqueViolation as exc:
+                cur.execute("rollback to savepoint tf_add_member")
                 raise self._translate_unique(exc) from exc
+            cur.execute("release savepoint tf_add_member")
 
         return free
 
@@ -316,6 +326,10 @@ class PgStore:
             raise PendingExists(f"팀{team_no} 또는 학번 {student_no} 가 없음")
 
         with self._cursor() as cur:
+            # add_member 와 같은 이유로 저장점을 둔다. 대기 지원이 이미 있어
+            # 부분 유일 색인이 막으면, 호출하는 쪽이 그 뒤에도 질의를 할 수
+            # 있어야 한다.
+            cur.execute("savepoint tf_create_application")
             try:
                 cur.execute(
                     """
@@ -327,8 +341,10 @@ class PgStore:
                     (team_id, student_id, status, reason),
                 )
             except pg_errors.UniqueViolation as exc:
+                cur.execute("rollback to savepoint tf_create_application")
                 raise PendingExists(str(exc)) from exc
             app_id, created_at = cur.fetchone()
+            cur.execute("release savepoint tf_create_application")
 
         return Application(
             id=app_id,

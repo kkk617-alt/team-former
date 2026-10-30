@@ -100,8 +100,10 @@ def _live_area() -> None:
 
     _render_close(closed)
     _render_unassigned(unassigned)
-    _render_assign_status()
-    _render_assign_button(closed)
+    # 진행 안내를 단추보다 먼저 그린다. 배정하는 동안 이 자리에 진행 상황을
+    # 써 넣기 때문이다.
+    status_slot = _render_assign_status()
+    _render_assign_button(closed, status_slot)
     _render_confirm_button()
     _render_teams(teams, confirmed)
 
@@ -132,28 +134,27 @@ def _render_unassigned(unassigned) -> None:
             st.write(f"- {student.name} — {common.describe_roles(student)}")
 
 
-def _render_assign_status() -> None:
-    """key 가 assign_status 인 컨테이너.
+def _render_assign_status():
+    """key 가 assign_status 인 컨테이너. 글을 쓸 자리를 돌려준다.
 
     AI 배정 진행 안내와, 규칙을 지키는 배정이 없을 때의 이유를 보여 준다
     (공고 2.7절, 2.5절 8항).
-
-    단추보다 먼저 그려야 한다. 배정하는 동안 이 안에 진행 상황을 써 넣기
-    때문이다.
     """
     st.subheader("AI 배정 진행")
-    container = st.container(key=keys.ASSIGN_STATUS, border=True)
-    with container:
+    with st.container(key=keys.ASSIGN_STATUS, border=True):
         slot = st.empty()
         stored = st.session_state.get(_STATUS)
         if stored:
-            slot.write(stored)
+            # st.text 로 그린다. 마크다운으로 그리면 모델 이름이 망가진다.
+            # ':free' 로 끝나는 무료 모델 이름 뒤에 글자가 붙으면 ':free:' 가 되어
+            # 🆓 로 바뀌고, 이름에 밑줄이 있으면 기울임꼴이 된다.
+            slot.text(stored)
         else:
             slot.caption("아직 배정하지 않았습니다.")
-    st.session_state["_status_slot"] = slot
+    return slot
 
 
-def _render_assign_button(closed: bool) -> None:
+def _render_assign_button(closed: bool, slot) -> None:
     if not st.button("AI 배정", key=keys.ADMIN_ASSIGN):
         return
 
@@ -162,7 +163,6 @@ def _render_assign_button(closed: bool) -> None:
         st.rerun(scope="fragment")
         return
 
-    slot = st.session_state.get("_status_slot")
     lines: list[str] = []
 
     def on_progress(attempt_no: int, model: str, elapsed: float) -> None:
@@ -181,8 +181,9 @@ def _render_assign_button(closed: bool) -> None:
 
     for attempt in outcome.attempts:
         detail = f" — {attempt.detail}" if attempt.detail else ""
+        # 모델 이름 바로 뒤에 콜론을 붙이지 않는다 (위 _render_assign_status 참고).
         lines.append(
-            f"{attempt.attempt_no}차 {attempt.model}: {attempt.status} "
+            f"{attempt.attempt_no}차 {attempt.model} → {attempt.status} "
             f"({attempt.elapsed_ms / 1000:.1f}초){detail}"
         )
 

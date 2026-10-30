@@ -205,6 +205,47 @@ def test_partial_unique_index_allows_only_one_pending_application(store):
         store.create_application(2, s4, "대기")
 
 
+def test_transaction_survives_a_constraint_violation(store):
+    """제약 위반 뒤에도 같은 트랜잭션에서 질의를 계속할 수 있어야 한다.
+
+    PostgreSQL 은 제약 위반이 나면 트랜잭션을 중단 상태로 만든다. 그런데
+    flow.py 는 유일성 제약에 막힌 뒤 그 지원을 '거절' 로 바꾸는 질의를 한다.
+    repo.py 가 저장점으로 되돌리지 않으면 그 질의가 InFailedSqlTransaction 으로
+    죽어, 먼저 도착한 학생만 기록하는 처리가 실패한다.
+    """
+    s1 = no(store, "학생1(PL;RW)")
+    s4 = no(store, "학생4(WP;FD)")
+    store.add_member(1, s1)
+
+    with pytest.raises(AlreadyInTeam):
+        store.add_member(2, s1)
+
+    # 트랜잭션이 살아 있어야 한다
+    application = store.create_application(1, s4, "대기")
+    store.set_application_status(application.id, "거절", "검사용")
+    assert store.application(application.id).status == "거절"
+
+
+def test_losing_the_last_slot_is_recorded_as_a_rejection(store):
+    """유일성 제약에 막힌 승인이 '거절' 로 기록된다 (공고 3장).
+
+    학생4 가 팀1 에 지원해 대기하는 동안 다른 경로로 팀2 에 들어가 버린 상황을
+    만든다. 승인 직전 재검사는 팀1 만 보므로 통과하지만, student_id 유일 제약이
+    막는다.
+    """
+    s1 = no(store, "학생1(PL;RW)")
+    s4 = no(store, "학생4(WP;FD)")
+
+    assert flow.apply_to_team(store, s1, 1).outcome == "승인"
+    assert flow.apply_to_team(store, s4, 1).outcome == "대기"
+
+    store.add_member(2, s4)  # 그 사이에 다른 팀에 들어감
+
+    decision = flow.cast_vote(store, s1, s4, "찬성")
+    assert decision.outcome == "거절"
+    assert "먼저 차지" in decision.reason
+
+
 def test_a_vote_cannot_be_changed(store):
     """(application_id, voter_id) 기본 키 — 한 번 투표하면 바꿀 수 없다."""
     s1 = no(store, "학생1(PL;RW)")

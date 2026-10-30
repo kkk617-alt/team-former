@@ -12,6 +12,7 @@ Streamlit 은 사용자마다 다른 스레드에서 스크립트를 돌리므�
 
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -41,25 +42,24 @@ def _build_pool() -> pg_pool.ThreadedConnectionPool:
     )
 
 
+_pool: pg_pool.ThreadedConnectionPool | None = None
+_pool_lock = threading.Lock()
+
+
 def get_pool() -> pg_pool.ThreadedConnectionPool:
-    """연결 풀. 앱이 사는 동안 한 번만 만든다."""
-    try:
-        import streamlit as st
-    except ImportError:
-        return _cached_pool()
+    """연결 풀. 앱 과정이 사는 동안 한 번만 만든다.
 
-    return st.cache_resource(_build_pool, show_spinner=False)()
-
-
-_pool_singleton: pg_pool.ThreadedConnectionPool | None = None
-
-
-def _cached_pool() -> pg_pool.ThreadedConnectionPool:
-    """Streamlit 밖에서(스크립트, 테스트) 쓰는 경로."""
-    global _pool_singleton
-    if _pool_singleton is None:
-        _pool_singleton = _build_pool()
-    return _pool_singleton
+    모듈 전역에 두면 Streamlit 이 스크립트를 다시 돌려도 모듈을 다시 불러오지
+    않으므로 풀이 그대로 남는다. st.cache_resource 를 쓰지 않는 덕에 Streamlit
+    밖(스크립트, 테스트)에서도 같은 경로가 쓰인다.
+    """
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            # 잠금을 기다리는 동안 다른 스레드가 만들었을 수 있다.
+            if _pool is None:
+                _pool = _build_pool()
+    return _pool
 
 
 @contextmanager
