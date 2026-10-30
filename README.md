@@ -58,11 +58,14 @@
 
 ## 4. 쓴 모델 3개
 
-| 차수 | 모델 |
-| --- | --- |
-| 1차 | `deepseek/deepseek-chat-v3-0324:free` |
-| 2차 | `meta-llama/llama-3.3-70b-instruct:free` |
-| 3차 | `qwen/qwen-2.5-72b-instruct:free` |
+| 차수 | 모델 | 고른 이유 |
+| --- | --- | --- |
+| 1차 | `google/gemma-4-31b-it:free` | 지시를 그대로 따르는 instruct 모델. JSON 형식을 잘 지킴 |
+| 2차 | `nvidia/nemotron-3.5-lightning:free` | 텍스트 전용 MoE 로 응답이 빠름 |
+| 3차 | `thinkingmachines/inkling-small:free` | 앞의 둘과 제공자가 달라 함께 막히지 않음 |
+
+제공자를 셋 다 다르게 골랐다. 무료 모델은 한 제공자가 혼잡하면 동시에 느려지는
+일이 있어, 같은 곳의 모델로 체인을 채우면 넘어가는 의미가 줄어든다.
 
 기본값은 [`app/ai.py`](app/ai.py) 의 `DEFAULT_MODELS` 이고, `.env` 의
 `AI_MODEL_1/2/3` 으로 바꿀 수 있다. 무료 모델로 자동 연결하는 라우터

@@ -147,14 +147,18 @@ class PgStore:
         return bool(row and row[0])
 
     # --- 학생 ------------------------------------------------------------
+    # 두 쪽 모두 text[] 로 못박는다. coalesce 의 기본값을 그냥 '{}' 로 두면
+    # 타입이 정해지지 않은 문자열이라 식 전체가 text 로 풀려, 배열 대신
+    # '{보고서 작성자,발표자}' 같은 문자열이 돌아온다. 그러면 tuple() 이 글자
+    # 단위로 쪼개어 보조 역할이 통째로 망가진다.
     _STUDENT_SELECT = """
         select s.student_no,
                s.name,
                s.main_role,
                coalesce(
-                   array_agg(r.role order by r.position, r.role)
+                   array_agg(r.role::text order by r.position, r.role)
                        filter (where r.role is not null),
-                   '{}'
+                   '{}'::text[]
                ) as sub_roles
         from tf_students s
         left join tf_student_sub_roles r on r.student_id = s.id
@@ -199,9 +203,9 @@ class PgStore:
                        s.name,
                        s.main_role,
                        coalesce(
-                           array_agg(r.role order by r.position, r.role)
+                           array_agg(r.role::text order by r.position, r.role)
                                filter (where r.role is not null),
-                           '{}'
+                           '{}'::text[]
                        ),
                        m.slot_no
                 from tf_members m

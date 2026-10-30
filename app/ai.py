@@ -41,10 +41,12 @@ MAX_TOKENS = 4096
 #: 오픈라우터의 무료 모델 목록은 수시로 바뀐다. 제출 전에
 #: https://openrouter.ai/models?max_price=0 에서 살아 있는지 확인하고, 필요하면
 #: .env 의 AI_MODEL_1/2/3 으로 바꾼다.
+#: 제공자를 셋 다 다르게 골랐다. 한 곳이 막히거나 느려도 체인이 살아남는다.
+#: 2026-10-30 에 scripts/check_setup.py 로 셋 다 쓸 수 있음을 확인했다.
 DEFAULT_MODELS: tuple[str, str, str] = (
-    "deepseek/deepseek-chat-v3-0324:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen-2.5-72b-instruct:free",
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "thinkingmachines/inkling-small:free",
 )
 
 # 결과 상태 (tf_ai_logs.status 의 검사 제약과 같아야 한다)
