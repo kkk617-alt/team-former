@@ -60,12 +60,21 @@
 
 | 차수 | 모델 | 고른 이유 |
 | --- | --- | --- |
-| 1차 | `google/gemma-4-31b-it:free` | 지시를 그대로 따르는 instruct 모델. JSON 형식을 잘 지킴 |
-| 2차 | `nvidia/nemotron-3.5-lightning:free` | 텍스트 전용 MoE 로 응답이 빠름 |
-| 3차 | `thinkingmachines/inkling-small:free` | 앞의 둘과 제공자가 달라 함께 막히지 않음 |
+| 1차 | `google/gemma-4-31b-it:free` | 지시형(instruct) 모델. 쓸 수 있을 때는 6초 안에 JSON 을 냄 |
+| 2차 | `dots-studio/dots-3-note-preview:free` | 1차와 제공자가 다름. 실제 배정에서 74.5초에 성공함 |
+| 3차 | `nvidia/nemotron-3-ultra-550b-a55b:free` | 또 다른 제공자. 셋이 함께 막히지 않게 함 |
 
-제공자를 셋 다 다르게 골랐다. 무료 모델은 한 제공자가 혼잡하면 동시에 느려지는
-일이 있어, 같은 곳의 모델로 체인을 채우면 넘어가는 의미가 줄어든다.
+제공자를 셋 다 다르게 골랐다. 무료 모델은 한 제공자가 혼잡하면 그 곳 모델이
+동시에 429 를 내므로, 같은 곳의 모델로 체인을 채우면 넘어가는 의미가 줄어든다.
+
+고르기 전에 쓸 수 있는 무료 모델을 모두 호출해 보고 정했다. 그 과정에서 확인한 것:
+
+- `thinkingmachines/inkling*:free` 는 HTTP 403 `only available on agentic
+  harnesses` 를 돌려주어 일반 API 로는 쓸 수 없다
+- 추론형 모델은 생각하는 데 토큰을 다 써서 빈 응답을 내는 일이 잦다.
+  `max_tokens` 를 4096 에서 16384 로 올리자 빈 응답이 사라졌다
+- 무료 모델 목록은 수시로 바뀐다. `scripts/check_setup.py` 가 고른 세 모델이
+  지금 살아 있는지 확인해 준다
 
 기본값은 [`app/ai.py`](app/ai.py) 의 `DEFAULT_MODELS` 이고, `.env` 의
 `AI_MODEL_1/2/3` 으로 바꿀 수 있다. 무료 모델로 자동 연결하는 라우터

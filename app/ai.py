@@ -29,8 +29,10 @@ TIMEOUT_SECONDS = 120.0
 #: 연결이 맺어지기를 기다리는 시간
 CONNECT_TIMEOUT = 15.0
 
-#: 추론에 토큰을 다 써서 빈 응답이 되는 것을 줄이기 위한 한도 (공고 4.3절)
-MAX_TOKENS = 4096
+#: 추론에 토큰을 다 써서 빈 응답이 되는 것을 줄이기 위한 한도 (공고 4.3절).
+#: 4096 으로 시험했을 때 생각만 하다 빈 응답을 내는 모델이 있어 늘렸다.
+#: 배정안 JSON 자체는 길어야 1천 토큰이 안 된다.
+MAX_TOKENS = 16384
 
 #: 1차·2차·3차 모델.
 #:
@@ -43,10 +45,12 @@ MAX_TOKENS = 4096
 #: .env 의 AI_MODEL_1/2/3 으로 바꾼다.
 #: 제공자를 셋 다 다르게 골랐다. 한 곳이 막히거나 느려도 체인이 살아남는다.
 #: 2026-10-30 에 scripts/check_setup.py 로 셋 다 쓸 수 있음을 확인했다.
+#: 추론형보다 지시형(instruct)을 앞에 둔다. 추론형은 생각하는 데 토큰을 다 써
+#: 빈 응답을 내거나 120초를 넘기는 일이 잦았다.
 DEFAULT_MODELS: tuple[str, str, str] = (
     "google/gemma-4-31b-it:free",
-    "nvidia/nemotron-3.5-lightning:free",
-    "thinkingmachines/inkling-small:free",
+    "dots-studio/dots-3-note-preview:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
 )
 
 # 결과 상태 (tf_ai_logs.status 의 검사 제약과 같아야 한다)
