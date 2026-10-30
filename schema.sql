@@ -55,8 +55,10 @@ create table if not exists tf_students (
 -- "최대 2개" 는 트리거로 DB에서 막습니다.
 -- -----------------------------------------------------------------------------
 create table if not exists tf_student_sub_roles (
-    student_id bigint  not null references tf_students(id) on delete cascade,
-    role       tf_role not null,
+    student_id bigint   not null references tf_students(id) on delete cascade,
+    role       tf_role  not null,
+    -- 명단 CSV 에 적힌 순서. 화면에 보조 역할을 CSV 와 같은 순서로 보여 주려고 둔다.
+    position   smallint not null default 1,
 
     primary key (student_id, role)
 );

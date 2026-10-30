@@ -16,7 +16,7 @@ flow.py 가 SQL 을 직접 쓰지 않게 하려는 분리이고, 덕분에 DB �
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, Sequence
 
 from .rules import Student
 
@@ -51,6 +51,34 @@ class PendingExists(StoreError):
 
 class Store(Protocol):
     """flow.py 가 필요로 하는 연산."""
+
+    # --- 명단과 계정 ------------------------------------------------------
+    def replace_roster(
+        self,
+        students: "Sequence[Student]",
+        team_count: int,
+        student_password_hash: str,
+    ) -> None:
+        """명단 CSV 로 상태를 초기화한다 (공고 2.6절).
+
+        지원·투표·팀원·마감 표시를 모두 지우고, 명단의 학생과 넣은 팀 수만큼의
+        빈 팀을 만든다. 관리자 계정은 남긴다 (공고 2.1절).
+
+        학생의 비밀번호는 모두 같은 값(1234)이므로 해시를 한 번만 계산해
+        함께 넘긴다. bcrypt 는 한 번에 수백 밀리초가 걸려, 학생마다 따로
+        계산하면 명단 올리기가 눈에 띄게 느려진다.
+        """
+        ...
+
+    def ensure_admin(self, password_hash: str) -> None:
+        """관리자 계정을 만들거나 비밀번호를 갱신한다 (공고 2.1절)."""
+        ...
+
+    def password_hash(self, student_no: str) -> str | None:
+        """저장된 bcrypt 해시. 없는 학번이면 None."""
+        ...
+
+    def is_admin(self, student_no: str) -> bool: ...
 
     # --- 학생 ------------------------------------------------------------
     def student(self, student_no: str) -> Student | None: ...

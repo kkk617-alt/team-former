@@ -23,6 +23,9 @@ from app.store import AlreadyInTeam, Application, PendingExists, SlotTaken
 class InMemoryStore:
     def __init__(self) -> None:
         self._students: dict[str, Student] = {}
+        self._hashes: dict[str, str] = {}
+        self._admin_no: str | None = None
+        self._admin_hash: str | None = None
         self._team_numbers: list[int] = []
         # (team_no, slot_no) -> student_no  ... 기본 키를 그대로 흉내 낸다
         self._slots: dict[tuple[int, int], str] = {}
@@ -32,15 +35,40 @@ class InMemoryStore:
         self._next_app_id = itertools.count(1)
         self._clock = itertools.count(1)
 
-    # --- 명단 올리기 ------------------------------------------------------
-    def reset(self, students: list[Student], team_count: int) -> None:
-        """명단 CSV 와 팀 수로 상태를 초기화한다 (공고 2.6절)."""
+    # --- 명단과 계정 ------------------------------------------------------
+    def replace_roster(
+        self, students, team_count: int, student_password_hash: str
+    ) -> None:
+        """명단 CSV 와 팀 수로 상태를 초기화한다 (공고 2.6절).
+
+        관리자 계정의 해시는 남긴다.
+        """
         self._students = {s.student_no: s for s in students}
+        self._hashes = {s.student_no: student_password_hash for s in students}
+        if self._admin_no is not None and self._admin_hash is not None:
+            self._hashes[self._admin_no] = self._admin_hash
+
         self._team_numbers = list(range(1, team_count + 1))
         self._slots.clear()
         self._applications.clear()
         self._votes.clear()
         self._settings.clear()
+        self._settings["team_count"] = str(team_count)
+
+    def reset(self, students: list[Student], team_count: int) -> None:
+        """테스트 편의용. 비밀번호는 쓰지 않는 흐름 테스트에서만 부른다."""
+        self.replace_roster(students, team_count, "$2b$12$테스트용-해시-아님")
+
+    def ensure_admin(self, password_hash: str) -> None:
+        self._admin_no = "admin"
+        self._admin_hash = password_hash
+        self._hashes["admin"] = password_hash
+
+    def password_hash(self, student_no: str) -> str | None:
+        return self._hashes.get(student_no)
+
+    def is_admin(self, student_no: str) -> bool:
+        return student_no == self._admin_no
 
     # --- 학생 ------------------------------------------------------------
     def student(self, student_no: str) -> Student | None:

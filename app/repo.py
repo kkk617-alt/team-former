@@ -1,0 +1,506 @@
+"""Supabase(PostgreSQL) 저장소. app/store.py 의 Store 계약을 구현한다.
+
+SQL 은 이 파일에만 있다. flow.py 와 ui/ 는 SQL 을 직접 쓰지 않는다.
+
+학번(text)과 팀 번호(int)로 말하는 Store 계약을 DB 의 내부 id 로 옮기는 일도
+여기서 한다.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from typing import Iterator, Sequence
+
+import psycopg2
+from psycopg2 import errors as pg_errors
+from psycopg2.extras import execute_values
+
+from . import db
+from .rules import MAX_TEAM_SIZE, Student
+from .store import AlreadyInTeam, Application, PendingExists, SlotTaken
+
+ADMIN_STUDENT_NO = "admin"
+
+#: 유일성 제약 이름 → 앱 예외. schema.sql 의 이름과 맞아야 한다.
+_MEMBER_STUDENT_UNIQUE = "tf_members_student_id_key"
+_PENDING_UNIQUE = "tf_applications_one_pending_per_student"
+
+
+class PgStore:
+    """연결 하나(= 트랜잭션 하나) 위에서 동작하는 저장소."""
+
+    def __init__(self, conn: psycopg2.extensions.connection) -> None:
+        self._conn = conn
+
+    # --- 작은 도구 -------------------------------------------------------
+    @contextmanager
+    def _cursor(self):
+        with self._conn.cursor() as cur:
+            yield cur
+
+    def _student_id(self, student_no: str) -> int | None:
+        with self._cursor() as cur:
+            cur.execute("select id from tf_students where student_no = %s", (student_no,))
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    def _team_id(self, team_no: int) -> int | None:
+        with self._cursor() as cur:
+            cur.execute("select id from tf_teams where team_no = %s", (team_no,))
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    # --- 명단과 계정 ------------------------------------------------------
+    def replace_roster(
+        self,
+        students: Sequence[Student],
+        team_count: int,
+        student_password_hash: str,
+    ) -> None:
+        """명단으로 처음 상태를 만든다 (공고 2.6절).
+
+        지원·투표·팀원·마감 표시를 모두 지우고, 명단의 학생과 넣은 팀 수만큼의
+        빈 팀을 만든다. 관리자 계정은 남긴다 (공고 2.1절).
+        """
+        with self._cursor() as cur:
+            # tf_teams 를 지우면 tf_members 와 tf_applications 가, 거기에 딸린
+            # tf_votes 가 함께 지워진다 (on delete cascade).
+            cur.execute("delete from tf_teams")
+            cur.execute("delete from tf_students where not is_admin")
+            cur.execute("delete from tf_settings")
+
+            execute_values(
+                cur,
+                """
+                insert into tf_students
+                    (student_no, name, main_role, password_hash, is_admin)
+                values %s
+                """,
+                [
+                    (s.student_no, s.name, s.main_role, student_password_hash, False)
+                    for s in students
+                ],
+            )
+
+            cur.execute(
+                "select id, student_no from tf_students where not is_admin"
+            )
+            ids = {student_no: sid for sid, student_no in cur.fetchall()}
+
+            sub_rows = [
+                (ids[s.student_no], role, position)
+                for s in students
+                for position, role in enumerate(s.sub_roles, start=1)
+            ]
+            if sub_rows:
+                execute_values(
+                    cur,
+                    "insert into tf_student_sub_roles (student_id, role, position) values %s",
+                    sub_rows,
+                )
+
+            execute_values(
+                cur,
+                "insert into tf_teams (team_no, name) values %s",
+                [(n, f"팀{n}") for n in range(1, team_count + 1)],
+            )
+
+            cur.execute(
+                "insert into tf_settings (key, value) values (%s, %s)",
+                ("team_count", str(team_count)),
+            )
+
+    def ensure_admin(self, password_hash: str) -> None:
+        """관리자 계정을 만들거나 비밀번호를 갱신한다 (공고 2.1절).
+
+        main_role 은 null 이다. 관리자는 팀 배정 대상이 아니다.
+        """
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                insert into tf_students
+                    (student_no, name, main_role, password_hash, is_admin)
+                values (%s, %s, null, %s, true)
+                on conflict (student_no) do update
+                    set password_hash = excluded.password_hash,
+                        is_admin      = true,
+                        main_role     = null
+                """,
+                (ADMIN_STUDENT_NO, "관리자", password_hash),
+            )
+
+    def password_hash(self, student_no: str) -> str | None:
+        with self._cursor() as cur:
+            cur.execute(
+                "select password_hash from tf_students where student_no = %s",
+                (student_no,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    def is_admin(self, student_no: str) -> bool:
+        with self._cursor() as cur:
+            cur.execute(
+                "select is_admin from tf_students where student_no = %s", (student_no,)
+            )
+            row = cur.fetchone()
+        return bool(row and row[0])
+
+    # --- 학생 ------------------------------------------------------------
+    _STUDENT_SELECT = """
+        select s.student_no,
+               s.name,
+               s.main_role,
+               coalesce(
+                   array_agg(r.role order by r.position, r.role)
+                       filter (where r.role is not null),
+                   '{}'
+               ) as sub_roles
+        from tf_students s
+        left join tf_student_sub_roles r on r.student_id = s.id
+        where not s.is_admin
+    """
+
+    @staticmethod
+    def _to_student(row) -> Student:
+        student_no, name, main_role, sub_roles = row
+        return Student(
+            student_no=student_no,
+            name=name,
+            main_role=main_role,
+            sub_roles=tuple(sub_roles or ()),
+        )
+
+    def student(self, student_no: str) -> Student | None:
+        with self._cursor() as cur:
+            cur.execute(
+                self._STUDENT_SELECT + " and s.student_no = %s group by s.id",
+                (student_no,),
+            )
+            row = cur.fetchone()
+        return self._to_student(row) if row else None
+
+    def all_students(self) -> list[Student]:
+        with self._cursor() as cur:
+            cur.execute(self._STUDENT_SELECT + " group by s.id order by s.student_no")
+            return [self._to_student(row) for row in cur.fetchall()]
+
+    # --- 팀 --------------------------------------------------------------
+    def team_numbers(self) -> list[int]:
+        with self._cursor() as cur:
+            cur.execute("select team_no from tf_teams order by team_no")
+            return [row[0] for row in cur.fetchall()]
+
+    def team_members(self, team_no: int) -> list[Student]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                select s.student_no,
+                       s.name,
+                       s.main_role,
+                       coalesce(
+                           array_agg(r.role order by r.position, r.role)
+                               filter (where r.role is not null),
+                           '{}'
+                       ),
+                       m.slot_no
+                from tf_members m
+                join tf_teams    t on t.id = m.team_id
+                join tf_students s on s.id = m.student_id
+                left join tf_student_sub_roles r on r.student_id = s.id
+                where t.team_no = %s
+                group by s.id, m.slot_no
+                order by m.slot_no
+                """,
+                (team_no,),
+            )
+            return [self._to_student(row[:4]) for row in cur.fetchall()]
+
+    def team_of(self, student_no: str) -> int | None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                select t.team_no
+                from tf_members m
+                join tf_teams    t on t.id = m.team_id
+                join tf_students s on s.id = m.student_id
+                where s.student_no = %s
+                """,
+                (student_no,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    def add_member(self, team_no: int, student_no: str) -> int:
+        """빈 자리 가운데 가장 작은 번호에 넣는다.
+
+        팀 행을 for update 로 잠가, 같은 팀에 동시에 들어오려는 요청을 줄 세운다.
+        그래도 최종 판정은 (team_id, slot_no) 기본 키와 student_id 유일 제약이
+        한다. 앱이 인원을 세서 막는 대신 DB 가 막게 하는 것이 공고 3장의 어려운
+        해결이다.
+        """
+        team_id = self._team_id(team_no)
+        student_id = self._student_id(student_no)
+        if team_id is None or student_id is None:
+            raise SlotTaken(f"팀{team_no} 또는 학번 {student_no} 가 없음")
+
+        with self._cursor() as cur:
+            cur.execute("select id from tf_teams where id = %s for update", (team_id,))
+
+            cur.execute(
+                "select slot_no from tf_members where team_id = %s", (team_id,)
+            )
+            taken = {row[0] for row in cur.fetchall()}
+            free = next(
+                (n for n in range(1, MAX_TEAM_SIZE + 1) if n not in taken), None
+            )
+            if free is None:
+                raise SlotTaken(f"팀{team_no} 에 빈 자리가 없음")
+
+            try:
+                cur.execute(
+                    """
+                    insert into tf_members (team_id, slot_no, student_id)
+                    values (%s, %s, %s)
+                    """,
+                    (team_id, free, student_id),
+                )
+            except pg_errors.UniqueViolation as exc:
+                raise self._translate_unique(exc) from exc
+
+        return free
+
+    @staticmethod
+    def _translate_unique(exc: pg_errors.UniqueViolation) -> Exception:
+        name = getattr(exc.diag, "constraint_name", "") or ""
+        if "student" in name:
+            return AlreadyInTeam(str(exc))
+        return SlotTaken(str(exc))
+
+    def remove_member(self, student_no: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                delete from tf_members
+                where student_id = (select id from tf_students where student_no = %s)
+                """,
+                (student_no,),
+            )
+
+    # --- 지원 ------------------------------------------------------------
+    _APPLICATION_SELECT = """
+        select a.id, t.team_no, s.student_no, a.status, a.reason, a.created_at
+        from tf_applications a
+        join tf_teams    t on t.id = a.team_id
+        join tf_students s on s.id = a.student_id
+    """
+
+    @staticmethod
+    def _to_application(row) -> Application:
+        app_id, team_no, student_no, status, reason, created_at = row
+        return Application(
+            id=app_id,
+            team_no=team_no,
+            student_no=student_no,
+            status=status,
+            reason=reason,
+            created_at=created_at,
+        )
+
+    def create_application(
+        self, team_no: int, student_no: str, status: str, reason: str | None = None
+    ) -> Application:
+        team_id = self._team_id(team_no)
+        student_id = self._student_id(student_no)
+        if team_id is None or student_id is None:
+            raise PendingExists(f"팀{team_no} 또는 학번 {student_no} 가 없음")
+
+        with self._cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    insert into tf_applications
+                        (team_id, student_id, status, reason)
+                    values (%s, %s, %s, %s)
+                    returning id, created_at
+                    """,
+                    (team_id, student_id, status, reason),
+                )
+            except pg_errors.UniqueViolation as exc:
+                raise PendingExists(str(exc)) from exc
+            app_id, created_at = cur.fetchone()
+
+        return Application(
+            id=app_id,
+            team_no=team_no,
+            student_no=student_no,
+            status=status,
+            reason=reason,
+            created_at=created_at,
+        )
+
+    def application(self, application_id: int) -> Application | None:
+        with self._cursor() as cur:
+            cur.execute(self._APPLICATION_SELECT + " where a.id = %s", (application_id,))
+            row = cur.fetchone()
+        return self._to_application(row) if row else None
+
+    def pending_application_of(self, student_no: str) -> Application | None:
+        with self._cursor() as cur:
+            cur.execute(
+                self._APPLICATION_SELECT
+                + " where s.student_no = %s and a.status = '대기'",
+                (student_no,),
+            )
+            row = cur.fetchone()
+        return self._to_application(row) if row else None
+
+    def pending_application_for(
+        self, team_no: int, student_no: str
+    ) -> Application | None:
+        with self._cursor() as cur:
+            cur.execute(
+                self._APPLICATION_SELECT
+                + " where s.student_no = %s and t.team_no = %s and a.status = '대기'",
+                (student_no, team_no),
+            )
+            row = cur.fetchone()
+        return self._to_application(row) if row else None
+
+    def pending_applications(self) -> list[Application]:
+        with self._cursor() as cur:
+            cur.execute(
+                self._APPLICATION_SELECT
+                + " where a.status = '대기' order by a.created_at, a.id"
+            )
+            return [self._to_application(row) for row in cur.fetchall()]
+
+    def pending_applications_for_team(self, team_no: int) -> list[Application]:
+        with self._cursor() as cur:
+            cur.execute(
+                self._APPLICATION_SELECT
+                + " where a.status = '대기' and t.team_no = %s"
+                + " order by a.created_at, a.id",
+                (team_no,),
+            )
+            return [self._to_application(row) for row in cur.fetchall()]
+
+    def set_application_status(
+        self, application_id: int, status: str, reason: str | None = None
+    ) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "update tf_applications set status = %s, reason = %s where id = %s",
+                (status, reason, application_id),
+            )
+
+    # --- 투표 ------------------------------------------------------------
+    def record_vote(self, application_id: int, voter_no: str, vote: str) -> None:
+        voter_id = self._student_id(voter_no)
+        if voter_id is None:
+            return
+        with self._cursor() as cur:
+            # 기본 키가 (application_id, voter_id) 이므로 두 번째 투표는 그대로
+            # 무시된다. 한 번 투표하면 바꿀 수 없다 (공고 2.4절).
+            cur.execute(
+                """
+                insert into tf_votes (application_id, voter_id, vote)
+                values (%s, %s, %s)
+                on conflict (application_id, voter_id) do nothing
+                """,
+                (application_id, voter_id, vote),
+            )
+
+    def vote_of(self, application_id: int, voter_no: str) -> str | None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                select v.vote
+                from tf_votes v
+                join tf_students s on s.id = v.voter_id
+                where v.application_id = %s and s.student_no = %s
+                """,
+                (application_id, voter_no),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    def votes_for(self, application_id: int) -> dict[str, str]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                select s.student_no, v.vote
+                from tf_votes v
+                join tf_students s on s.id = v.voter_id
+                where v.application_id = %s
+                """,
+                (application_id,),
+            )
+            return dict(cur.fetchall())
+
+    # --- 설정 ------------------------------------------------------------
+    def setting(self, key: str) -> str | None:
+        with self._cursor() as cur:
+            cur.execute("select value from tf_settings where key = %s", (key,))
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                insert into tf_settings (key, value) values (%s, %s)
+                on conflict (key) do update set value = excluded.value
+                """,
+                (key, value),
+            )
+
+    def is_closed(self) -> bool:
+        return self.setting("closed") == "1"
+
+    # --- AI 호출 기록 -----------------------------------------------------
+    def log_ai_attempts(self, attempts) -> None:
+        """오픈라우터 호출 기록을 남긴다 (공고 4.2절이 허용한 확장).
+
+        README 7.1절 5항의 실패 사례를 꾸며 내지 않고 실제 기록으로 제시하기
+        위한 것이다 (공고 6.3절 20번).
+        """
+        if not attempts:
+            return
+        with self._cursor() as cur:
+            execute_values(
+                cur,
+                """
+                insert into tf_ai_logs
+                    (attempt_no, model, status, detail, elapsed_ms)
+                values %s
+                """,
+                [
+                    (a.attempt_no, a.model, a.status, a.detail, a.elapsed_ms)
+                    for a in attempts
+                ],
+            )
+
+    def recent_ai_logs(self, limit: int = 20) -> list[tuple]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                select created_at, attempt_no, model, status, elapsed_ms, detail
+                from tf_ai_logs
+                order by created_at desc, id desc
+                limit %s
+                """,
+                (limit,),
+            )
+            return cur.fetchall()
+
+
+@contextmanager
+def open_store() -> Iterator[PgStore]:
+    """동작 하나를 트랜잭션 하나로 묶는다.
+
+    블록이 끝나면 커밋하고 예외가 나면 되돌리므로, 승인 직전 재검사와 팀원 추가가
+    한 덩어리로 처리된다.
+    """
+    with db.connection() as conn:
+        yield PgStore(conn)
