@@ -37,24 +37,23 @@ class Snapshot:
 
 
 def _read(store: Store, student_no: str) -> Snapshot:
-    my_team_no = store.team_of(student_no)
+    """화면 한 번에 필요한 값을 질의 한 번으로 가져온다 (공고 4.2절).
+
+    따로 물으면 왕복이 다섯 번이다. 배포한 앱에서 그것만으로 화면 한 번에 6.3초가
+    걸려 fragment 의 5초 간격을 넘겼고, 그러면 모든 세션이 쉬지 않고 화면을 그리는
+    상태가 되어 누른 단추의 처리가 뒤로 밀렸다 (공고 2.7절의 7초).
+    """
+    screen = store.student_screen(student_no)
     snapshot = Snapshot(
-        closed=store.is_closed(),
-        my_team_no=my_team_no,
-        my_pending=store.pending_application_of(student_no),
-        teams=flow.current_teams(store),
+        closed=screen.closed,
+        my_team_no=screen.my_team_no,
+        my_pending=screen.my_pending,
+        teams=screen.teams,
     )
-
-    if my_team_no is not None:
-        # 지원·지원자·내 투표를 한 번에 가져온다. 지원마다 따로 물으면 왕복이
-        # 지원 수의 두 배가 되어 화면이 느려진다 (공고 4.2절).
-        for application, applicant, vote in store.incoming_applications(
-            my_team_no, student_no
-        ):
-            snapshot.incoming.append((application, applicant))
-            if vote is not None:
-                snapshot.my_votes[application.id] = vote
-
+    for application, applicant, vote in screen.incoming:
+        snapshot.incoming.append((application, applicant))
+        if vote is not None:
+            snapshot.my_votes[application.id] = vote
     return snapshot
 
 

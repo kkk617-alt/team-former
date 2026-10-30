@@ -33,6 +33,23 @@ class Application:
     created_at: Any = None
 
 
+@dataclass(frozen=True)
+class StudentScreen:
+    """학생 화면 한 번을 그리는 데 필요한 값 전부 (공고 2.8절).
+
+    원격 DB 에서는 왕복 횟수가 곧 화면이 뜨는 시간이다 (공고 4.2절). 이 값들을
+    따로 물으면 왕복이 다섯 번이 되어, fragment 의 5초 간격으로는 다 그리지
+    못하고 화면이 줄지어 밀린다. 그래서 한 번에 받아 온다.
+    """
+
+    closed: bool
+    teams: dict[int, list[Student]]
+    my_team_no: int | None
+    my_pending: Application | None
+    #: 내 팀에 들어온 대기 중인 지원 [(지원, 지원자, 내가 한 투표)]
+    incoming: list[tuple[Application, Student, str | None]]
+
+
 class StoreError(Exception):
     """저장소 제약 위반."""
 
@@ -114,6 +131,13 @@ class Store(Protocol):
         """그 팀의 대기 중인 지원을 (지원, 지원자, voter_no 가 한 투표) 로 돌려준다.
 
         지원마다 학생과 투표를 따로 조회하면 왕복이 지원 수의 두 배가 된다.
+        """
+        ...
+
+    def student_screen(self, student_no: str) -> StudentScreen:
+        """학생 화면 한 번에 필요한 값을 왕복 한 번으로 가져온다 (공고 4.2절).
+
+        my_team_no 는 teams 에서 끌어내므로 따로 묻지 않는다.
         """
         ...
 

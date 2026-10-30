@@ -9,6 +9,7 @@ SQL 은 이 파일에만 있다. flow.py 와 ui/ 는 SQL 을 직접 쓰지 않�
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Iterator, Sequence
 
 import psycopg2
@@ -17,7 +18,13 @@ from psycopg2.extras import execute_values
 
 from . import db
 from .rules import MAX_TEAM_SIZE, Student
-from .store import AlreadyInTeam, Application, PendingExists, SlotTaken
+from .store import (
+    AlreadyInTeam,
+    Application,
+    PendingExists,
+    SlotTaken,
+    StudentScreen,
+)
 
 ADMIN_STUDENT_NO = "admin"
 
@@ -310,6 +317,151 @@ class PgStore:
             applicant = self._to_student((row[2], row[6], row[7], row[8]))
             result.append((application, applicant, row[9]))
         return result
+
+    #: 학생 화면 한 번에 필요한 값 전부를 한 문장으로 가져온다.
+    #:
+    #: 따로 물으면 왕복이 다섯 번이다. 배포한 앱에서 그것만으로 화면 한 번에
+    #: 6.3초가 걸려, fragment 의 5초 간격을 넘겨 모든 세션이 쉬지 않고 화면을
+    #: 그리는 상태가 되었다. 그러면 누른 단추의 처리가 뒤로 밀려, 채점 프로그램이
+    #: 기다리는 7초를 넘긴다 (공고 2.7절, 4.2절).
+    #:
+    #: 팀이 없는 학생은 my_team 이 비어 incoming 조건이 거짓이 되므로 빈 목록이
+    #: 나온다. json_agg 는 행이 없으면 null 을 주므로 파이썬 쪽에서 받아 준다.
+    _SCREEN_SQL = """
+        with me as (
+            select id from tf_students where student_no = %(no)s
+        ),
+        sub as (
+            select r.student_id,
+                   array_agg(r.role::text order by r.position, r.role) as sub_roles
+            from tf_student_sub_roles r
+            group by r.student_id
+        ),
+        my_team as (
+            select m.team_id from tf_members m
+            where m.student_id = (select id from me)
+        )
+        select
+            (select value from tf_settings where key = 'closed'),
+            (
+                select json_agg(t order by t.team_no, t.slot_no)
+                from (
+                    select tm.team_no,
+                           mm.slot_no,
+                           st.student_no,
+                           st.name,
+                           st.main_role,
+                           coalesce(sub.sub_roles, '{}'::text[]) as sub_roles
+                    from tf_teams tm
+                    left join tf_members  mm on mm.team_id = tm.id
+                    left join tf_students st on st.id = mm.student_id
+                    left join sub on sub.student_id = st.id
+                ) t
+            ),
+            (
+                select json_build_object(
+                    'id', a.id,
+                    'team_no', tm.team_no,
+                    'status', a.status,
+                    'reason', a.reason,
+                    'created_at', a.created_at
+                )
+                from tf_applications a
+                join tf_teams tm on tm.id = a.team_id
+                where a.student_id = (select id from me) and a.status = '대기'
+            ),
+            (
+                select json_agg(i order by i.created_at, i.id)
+                from (
+                    select a.id,
+                           tm.team_no,
+                           st.student_no,
+                           a.status,
+                           a.reason,
+                           a.created_at,
+                           st.name,
+                           st.main_role,
+                           coalesce(sub.sub_roles, '{}'::text[]) as sub_roles,
+                           v.vote
+                    from tf_applications a
+                    join tf_teams    tm on tm.id = a.team_id
+                    join tf_students st on st.id = a.student_id
+                    left join sub on sub.student_id = st.id
+                    left join tf_votes v
+                           on v.application_id = a.id
+                          and v.voter_id = (select id from me)
+                    where a.status = '대기'
+                      and a.team_id = (select team_id from my_team)
+                ) i
+            )
+    """
+
+    def student_screen(self, student_no: str) -> StudentScreen:
+        """학생 화면 한 번에 필요한 값을 왕복 한 번으로 가져온다 (공고 4.2절)."""
+        with self._cursor() as cur:
+            cur.execute(self._SCREEN_SQL, {"no": student_no})
+            closed, teams_json, pending_json, incoming_json = cur.fetchone()
+
+        teams: dict[int, list[Student]] = {}
+        my_team_no: int | None = None
+        for row in teams_json or ():
+            team_no = row["team_no"]
+            teams.setdefault(team_no, [])
+            if row["student_no"] is None:  # 빈 팀
+                continue
+            student = self._to_student(
+                (row["student_no"], row["name"], row["main_role"], row["sub_roles"])
+            )
+            teams[team_no].append(student)
+            if student.student_no == student_no:
+                my_team_no = team_no
+
+        my_pending = None
+        if pending_json is not None:
+            my_pending = self._to_application(
+                (
+                    pending_json["id"],
+                    pending_json["team_no"],
+                    student_no,
+                    pending_json["status"],
+                    pending_json["reason"],
+                    _to_time(pending_json["created_at"]),
+                )
+            )
+
+        incoming = []
+        for row in incoming_json or ():
+            incoming.append(
+                (
+                    self._to_application(
+                        (
+                            row["id"],
+                            row["team_no"],
+                            row["student_no"],
+                            row["status"],
+                            row["reason"],
+                            _to_time(row["created_at"]),
+                        )
+                    ),
+                    self._to_student(
+                        (
+                            row["student_no"],
+                            row["name"],
+                            row["main_role"],
+                            row["sub_roles"],
+                        )
+                    ),
+                    row["vote"],
+                )
+            )
+
+        return StudentScreen(
+            closed=closed == "1",
+            teams=teams,
+            my_team_no=my_team_no,
+            my_pending=my_pending,
+            incoming=incoming,
+        )
 
     def team_of(self, student_no: str) -> int | None:
         with self._cursor() as cur:
@@ -615,3 +767,13 @@ def open_store() -> Iterator[PgStore]:
     """
     with db.connection() as conn:
         yield PgStore(conn)
+
+def _to_time(value):
+    """JSON 으로 돌아온 시각을 datetime 으로 되살린다.
+
+    psycopg2 는 timestamptz 를 datetime 으로 주지만, json 안에 들어가면
+    ISO 문자열이 된다. 따로 물은 값과 같은지 비교하려면 되살려야 한다.
+    """
+    if value is None or isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value)

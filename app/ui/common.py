@@ -120,9 +120,12 @@ def render_refresh_button() -> None:
 
     자동 갱신은 st.fragment 로 하지만, 채점 프로그램이 동작 전에 이 단추를 먼저
     누르므로 보험으로 함께 둔다.
+
+    단추를 눌러도 아무것도 하지 않는다. 누르는 것만으로 Streamlit 이 이 fragment
+    를 처음부터 다시 돌리고, 그 처음에서 DB 를 이미 다시 읽기 때문이다. 여기서
+    st.rerun 을 또 부르면 같은 읽기를 한 번 더 해 화면이 두 배로 느려진다.
     """
-    if st.button("새로 고침", key=keys.REFRESH):
-        st.rerun(scope="fragment")
+    st.button("새로 고침", key=keys.REFRESH)
 
 
 # =============================================================================

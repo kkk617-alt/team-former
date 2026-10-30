@@ -323,3 +323,110 @@ def test_ai_attempts_are_logged(store):
     statuses = [row[3] for row in rows]
     assert "시간초과" in statuses
     assert "성공" in statuses
+
+# =============================================================================
+# 화면 한 번 = 왕복 한 번 (공고 4.2절)
+# =============================================================================
+
+
+class _CountingCursor:
+    """execute 를 센다. with 문에서도 쓸 수 있게 감싼다."""
+
+    def __init__(self, cursor, counter):
+        self._cursor = cursor
+        self._counter = counter
+
+    def execute(self, *args, **kwargs):
+        self._counter.executes += 1
+        return self._cursor.execute(*args, **kwargs)
+
+    def __enter__(self):
+        self._cursor.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._cursor.__exit__(*exc)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class _CountingConn:
+    def __init__(self, conn):
+        self._conn = conn
+        self.executes = 0
+
+    def cursor(self, *args, **kwargs):
+        return _CountingCursor(self._conn.cursor(*args, **kwargs), self)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def _state_with_a_pending_application(store):
+    """팀1 에 두 명, 팀1 에 대기 중인 지원 하나, 그 지원에 투표 하나."""
+    s1 = no(store, "학생1(PL;RW)")
+    s4 = no(store, "학생4(WP;FD)")
+    s7 = no(store, "학생7(FD;PT)")
+    flow.apply_to_team(store, s1, 1)
+    flow.apply_to_team(store, s4, 1)
+    flow.cast_vote(store, s1, s4, "찬성")
+    flow.apply_to_team(store, s7, 1)
+    flow.cast_vote(store, s1, s7, "찬성")
+    return s1, s4, s7
+
+
+def test_student_screen_needs_one_round_trip(store):
+    """공고 4.2절. 다섯 번 묻던 것을 한 번으로 줄인 것이 이 과제의 요구다."""
+    s1, _, _ = _state_with_a_pending_application(store)
+
+    counting = _CountingConn(store._conn)  # noqa: SLF001
+    store._conn = counting  # noqa: SLF001
+    store.student_screen(s1)
+
+    assert counting.executes == 1, f"왕복 {counting.executes} 번"
+
+
+def test_student_screen_says_the_same_thing_as_the_single_queries(store):
+    """한 번에 가져온 값이 따로 물은 값과 같아야 한다.
+
+    질의를 둘로 두면 한쪽만 고쳐져 어긋날 수 있다. 그 어긋남을 여기서 잡는다.
+    """
+    s1, _, s7 = _state_with_a_pending_application(store)
+
+    screen = store.student_screen(s1)
+    assert screen.closed == store.is_closed()
+    assert screen.teams == store.all_team_members()
+    assert screen.my_team_no == store.team_of(s1)
+    assert screen.my_pending == store.pending_application_of(s1)
+    assert screen.incoming == store.incoming_applications(1, s1)
+
+    # 투표까지 들어 있어야 한다
+    assert [(a.student_no, v) for a, _, v in screen.incoming] == [(s7, "찬성")]
+
+
+def test_student_screen_of_a_student_with_no_team(store):
+    _state_with_a_pending_application(store)
+    s2 = no(store, "학생2(PL;PT)")
+
+    screen = store.student_screen(s2)
+    assert screen.my_team_no is None
+    assert screen.my_pending is None
+    assert screen.incoming == []
+    assert sorted(screen.teams) == [1, 2, 3]
+
+
+def test_student_screen_of_an_applicant_waiting_for_votes(store):
+    _, _, s7 = _state_with_a_pending_application(store)
+
+    screen = store.student_screen(s7)
+    assert screen.my_team_no is None
+    assert screen.my_pending is not None
+    assert screen.my_pending.team_no == 1
+    assert screen.my_pending.status == "대기"
+
+
+def test_student_screen_sees_the_closing(store):
+    s1, _, _ = _state_with_a_pending_application(store)
+    flow.close_recruiting(store)
+    assert store.student_screen(s1).closed is True

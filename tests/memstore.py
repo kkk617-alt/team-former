@@ -17,7 +17,13 @@ from __future__ import annotations
 import itertools
 
 from app.rules import MAX_TEAM_SIZE, Student
-from app.store import AlreadyInTeam, Application, PendingExists, SlotTaken
+from app.store import (
+    AlreadyInTeam,
+    Application,
+    PendingExists,
+    SlotTaken,
+    StudentScreen,
+)
 
 
 class InMemoryStore:
@@ -105,6 +111,22 @@ class InMemoryStore:
                 (application, applicant, self.vote_of(application.id, voter_no))
             )
         return result
+
+    def student_screen(self, student_no: str) -> StudentScreen:
+        """실제 DB 에서는 질의 한 번이다 (app/repo.py 참고). 여기서는 왕복이
+        없으므로 따로 묻던 것을 그대로 모은다."""
+        my_team_no = self.team_of(student_no)
+        return StudentScreen(
+            closed=self.is_closed(),
+            teams=self.all_team_members(),
+            my_team_no=my_team_no,
+            my_pending=self.pending_application_of(student_no),
+            incoming=(
+                self.incoming_applications(my_team_no, student_no)
+                if my_team_no is not None
+                else []
+            ),
+        )
 
     def team_of(self, student_no: str) -> int | None:
         for (team_no, _slot), no in self._slots.items():

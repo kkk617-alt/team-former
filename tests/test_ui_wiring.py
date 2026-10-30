@@ -150,3 +150,54 @@ def test_login_and_shared_keys_live_in_common():
         keys.REFRESH,
     }
     assert shared <= set(fixed), sorted(shared - set(fixed))
+
+# =============================================================================
+# 화면 한 번에 드는 왕복 (공고 4.2절)
+# =============================================================================
+
+
+def _function(path: Path, name: str) -> ast.FunctionDef:
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"{path.name} 에 {name} 이 없음")
+
+
+def _store_calls(func: ast.FunctionDef) -> list[str]:
+    """함수 안에서 store.<무엇>(...) 을 부른 이름들."""
+    return [
+        node.func.attr
+        for node in ast.walk(func)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "store"
+    ]
+
+
+def test_one_student_screen_asks_the_store_once():
+    """화면 한 번에 저장소를 한 번만 부른다 (공고 4.2절).
+
+    따로 물으면 왕복이 다섯 번이고, 배포한 앱에서는 화면 한 번이 6.3초가 되어
+    fragment 의 5초 간격을 넘겼다. 그러면 모든 세션이 쉬지 않고 화면을 그리는
+    상태가 되어, 누른 단추의 처리가 채점 프로그램이 기다리는 7초를 넘긴다.
+    """
+    calls = _store_calls(_function(UI_DIR / "student.py", "_read"))
+    assert calls == ["student_screen"], f"저장소를 {len(calls)} 번 부름: {calls}"
+
+
+def test_the_refresh_button_does_not_read_twice():
+    """새로 고침이 st.rerun 을 또 부르면 같은 읽기를 두 번 한다.
+
+    단추를 누르는 것만으로 Streamlit 이 fragment 를 처음부터 다시 돌리고, 그
+    처음에서 DB 를 이미 다시 읽는다.
+    """
+    func = _function(UI_DIR / "common.py", "render_refresh_button")
+    reruns = [
+        node
+        for node in ast.walk(func)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "rerun"
+    ]
+    assert reruns == [], "새로 고침이 st.rerun 을 부르고 있음"
