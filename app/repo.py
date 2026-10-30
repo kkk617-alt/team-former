@@ -189,6 +189,21 @@ class PgStore:
             cur.execute(self._STUDENT_SELECT + " group by s.id order by s.student_no")
             return [self._to_student(row) for row in cur.fetchall()]
 
+    def unassigned_students(self) -> list[Student]:
+        """팀이 없는 학생을 질의 한 번으로 가져온다 (app/store.py 참고)."""
+        with self._cursor() as cur:
+            cur.execute(
+                self._STUDENT_SELECT
+                + """
+                  and not exists (
+                      select 1 from tf_members m where m.student_id = s.id
+                  )
+                group by s.id
+                order by s.student_no
+                """
+            )
+            return [self._to_student(row) for row in cur.fetchall()]
+
     # --- 팀 --------------------------------------------------------------
     def team_numbers(self) -> list[int]:
         with self._cursor() as cur:
@@ -219,6 +234,82 @@ class PgStore:
                 (team_no,),
             )
             return [self._to_student(row[:4]) for row in cur.fetchall()]
+
+    def all_team_members(self) -> dict[int, list[Student]]:
+        """모든 팀의 팀원을 질의 한 번으로 가져온다.
+
+        팀에 아무도 없으면 left join 때문에 학생 칸이 비어서 나오므로 건너뛴다.
+        """
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                select t.team_no,
+                       s.student_no,
+                       s.name,
+                       s.main_role,
+                       coalesce(
+                           array_agg(r.role::text order by r.position, r.role)
+                               filter (where r.role is not null),
+                           '{}'::text[]
+                       ),
+                       m.slot_no
+                from tf_teams t
+                left join tf_members  m on m.team_id = t.id
+                left join tf_students s on s.id = m.student_id
+                left join tf_student_sub_roles r on r.student_id = s.id
+                group by t.team_no, s.id, m.slot_no
+                order by t.team_no, m.slot_no
+                """
+            )
+            rows = cur.fetchall()
+
+        teams: dict[int, list[Student]] = {}
+        for row in rows:
+            team_no = row[0]
+            teams.setdefault(team_no, [])
+            if row[1] is None:  # 빈 팀
+                continue
+            teams[team_no].append(self._to_student(row[1:5]))
+        return teams
+
+    def incoming_applications(
+        self, team_no: int, voter_no: str
+    ) -> list[tuple[Application, Student, str | None]]:
+        """대기 중인 지원과 지원자, 그리고 voter_no 의 투표를 한 번에 가져온다."""
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                select a.id, t.team_no, s.student_no, a.status, a.reason,
+                       a.created_at, s.name, s.main_role,
+                       coalesce(
+                           array_agg(r.role::text order by r.position, r.role)
+                               filter (where r.role is not null),
+                           '{}'::text[]
+                       ),
+                       v.vote
+                from tf_applications a
+                join tf_teams    t on t.id = a.team_id
+                join tf_students s on s.id = a.student_id
+                left join tf_student_sub_roles r on r.student_id = s.id
+                left join tf_votes v
+                       on v.application_id = a.id
+                      and v.voter_id = (
+                          select id from tf_students where student_no = %s
+                      )
+                where t.team_no = %s and a.status = '대기'
+                group by a.id, t.team_no, s.student_no, s.name, s.main_role, v.vote
+                order by a.created_at, a.id
+                """,
+                (voter_no, team_no),
+            )
+            rows = cur.fetchall()
+
+        result = []
+        for row in rows:
+            application = self._to_application(row[:6])
+            applicant = self._to_student((row[2], row[6], row[7], row[8]))
+            result.append((application, applicant, row[9]))
+        return result
 
     def team_of(self, student_no: str) -> int | None:
         with self._cursor() as cur:

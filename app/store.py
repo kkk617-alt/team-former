@@ -87,10 +87,35 @@ class Store(Protocol):
         """관리자를 제외한 학생 전체."""
         ...
 
+    def unassigned_students(self) -> list[Student]:
+        """팀이 없는 학생. 질의 한 번으로 가져와야 한다.
+
+        학생마다 team_of 를 부르면 명단이 16명일 때 왕복이 17번이 되어, 원격
+        DB 에서는 화면 한 번 그리는 데 5초가 넘는다. 채점 프로그램은 단추가
+        나타나기를 7초까지만 기다린다 (공고 2.7절, 4.2절).
+        """
+        ...
+
     # --- 팀 --------------------------------------------------------------
     def team_numbers(self) -> list[int]: ...
 
     def team_members(self, team_no: int) -> list[Student]: ...
+
+    def all_team_members(self) -> dict[int, list[Student]]:
+        """{팀 번호: 팀원}. 빈 팀도 빈 목록으로 들어 있다.
+
+        팀마다 team_members 를 부르는 대신 질의 한 번으로 가져온다.
+        """
+        ...
+
+    def incoming_applications(
+        self, team_no: int, voter_no: str
+    ) -> list[tuple[Application, Student, str | None]]:
+        """그 팀의 대기 중인 지원을 (지원, 지원자, voter_no 가 한 투표) 로 돌려준다.
+
+        지원마다 학생과 투표를 따로 조회하면 왕복이 지원 수의 두 배가 된다.
+        """
+        ...
 
     def team_of(self, student_no: str) -> int | None: ...
 

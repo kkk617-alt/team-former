@@ -46,12 +46,12 @@ def _read(store: Store, student_no: str) -> Snapshot:
     )
 
     if my_team_no is not None:
-        for application in store.pending_applications_for_team(my_team_no):
-            applicant = store.student(application.student_no)
-            if applicant is None:
-                continue
+        # 지원·지원자·내 투표를 한 번에 가져온다. 지원마다 따로 물으면 왕복이
+        # 지원 수의 두 배가 되어 화면이 느려진다 (공고 4.2절).
+        for application, applicant, vote in store.incoming_applications(
+            my_team_no, student_no
+        ):
             snapshot.incoming.append((application, applicant))
-            vote = store.vote_of(application.id, student_no)
             if vote is not None:
                 snapshot.my_votes[application.id] = vote
 

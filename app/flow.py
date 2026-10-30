@@ -34,13 +34,17 @@ REFUSE = "거부"
 
 
 def current_teams(store: Store) -> dict[int, list[Student]]:
-    """{팀 번호: 팀원}. 빈 팀도 빈 목록으로 들어 있다."""
-    return {team_no: store.team_members(team_no) for team_no in store.team_numbers()}
+    """{팀 번호: 팀원}. 빈 팀도 빈 목록으로 들어 있다.
+
+    팀마다 따로 묻지 않고 저장소가 한 번에 돌려준다. 원격 DB 에서는 왕복 횟수가
+    곧 화면이 뜨는 시간이다 (공고 4.2절).
+    """
+    return store.all_team_members()
 
 
 def unassigned_students(store: Store) -> list[Student]:
     """팀이 없는 학생 (공고 2.5절 2항)."""
-    return [s for s in store.all_students() if store.team_of(s.student_no) is None]
+    return store.unassigned_students()
 
 
 # =============================================================================

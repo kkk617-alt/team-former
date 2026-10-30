@@ -13,6 +13,7 @@ Streamlit 은 사용자마다 다른 스레드에서 스크립트를 돌리므�
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -22,7 +23,16 @@ from psycopg2 import pool as pg_pool
 from . import config
 
 MIN_CONNECTIONS = 1
-MAX_CONNECTIONS = 8
+
+#: 채점 프로그램은 가상 학생마다 브라우저를 따로 연다 (공고 6.2절 2항). 명단이
+#: 16명이면 창 16개가 5초마다 화면을 다시 그리므로 요청이 몰린다.
+MAX_CONNECTIONS = 20
+
+#: 풀이 비었을 때 기다리는 한도. psycopg2 의 getconn 은 풀이 다 차면 기다리지
+#: 않고 바로 예외를 던지므로, 직접 잠깐 기다렸다 다시 집는다. 그냥 두면 동시
+#: 접속이 몰릴 때 화면이 오류로 죽는다.
+POOL_WAIT_SECONDS = 5.0
+POOL_RETRY_DELAY = 0.1
 
 
 def _build_pool() -> pg_pool.ThreadedConnectionPool:
@@ -70,7 +80,7 @@ def connection() -> Iterator[psycopg2.extensions.connection]:
     되므로, 승인 직전 재검사와 팀원 추가가 한 덩어리로 처리된다.
     """
     pool = get_pool()
-    conn = pool.getconn()
+    conn = _borrow(pool)
     try:
         yield conn
         conn.commit()
@@ -79,6 +89,18 @@ def connection() -> Iterator[psycopg2.extensions.connection]:
         raise
     finally:
         pool.putconn(conn)
+
+
+def _borrow(pool: pg_pool.ThreadedConnectionPool):
+    """풀에서 연결을 집는다. 다 차 있으면 잠깐 기다렸다 다시 시도한다."""
+    deadline = time.monotonic() + POOL_WAIT_SECONDS
+    while True:
+        try:
+            return pool.getconn()
+        except pg_pool.PoolError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(POOL_RETRY_DELAY)
 
 
 def check_connection() -> bool:

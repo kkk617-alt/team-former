@@ -78,6 +78,9 @@ class InMemoryStore:
     def all_students(self) -> list[Student]:
         return list(self._students.values())
 
+    def unassigned_students(self) -> list[Student]:
+        return [s for s in self._students.values() if self.team_of(s.student_no) is None]
+
     # --- 팀 --------------------------------------------------------------
     def team_numbers(self) -> list[int]:
         return list(self._team_numbers)
@@ -88,6 +91,20 @@ class InMemoryStore:
             for (t, _slot), no in sorted(self._slots.items())
             if t == team_no
         ]
+
+    def all_team_members(self) -> dict[int, list[Student]]:
+        return {team_no: self.team_members(team_no) for team_no in self._team_numbers}
+
+    def incoming_applications(self, team_no: int, voter_no: str):
+        result = []
+        for application in self.pending_applications_for_team(team_no):
+            applicant = self._students.get(application.student_no)
+            if applicant is None:
+                continue
+            result.append(
+                (application, applicant, self.vote_of(application.id, voter_no))
+            )
+        return result
 
     def team_of(self, student_no: str) -> int | None:
         for (team_no, _slot), no in self._slots.items():
