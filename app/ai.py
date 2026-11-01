@@ -4,7 +4,7 @@
 3차까지 실패하면 호출하는 쪽(app/assign.py)이 스스로 배정한다.
 
 실패로 보는 경우
-  HTTP 오류(429 포함), 빈 응답, 형식 오류, 전여 120초 초과,
+  HTTP 오류(429 포함), 빈 응답, 형식 오류, 전체 120초 초과,
   그리고 배정안이 공고 2.5절 4항의 검사를 통과하지 못한 경우
 
 HTTP 와 시간은 주입받는다(streamer, now). 테스트가 진짜로 기다리거나 진짜
@@ -23,7 +23,7 @@ from .rules import MAX_TEAM_SIZE, MIN_TEAM_SIZE, Student
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-#: 모델 하나에 허용하는 전여 대기 시간 (공고 2.5절 5항)
+#: 모델 하나에 허용하는 전체 대기 시간 (공고 2.5절 5항)
 TIMEOUT_SECONDS = 120.0
 
 #: 연결이 맺어지기를 기다리는 시간
@@ -63,7 +63,7 @@ INVALID = "검사실패"
 
 
 class Streamer(Protocol):
-    """HTTP 한 번. 본문을 조금씩 돌려주어야 전여 대기 시간을 잴 수 있다."""
+    """HTTP 한 번. 본문을 조금씩 돌려주어야 전체 대기 시간을 잴 수 있다."""
 
     def __call__(
         self, *, model: str, body: dict, api_key: str, timeout_seconds: float
@@ -75,7 +75,7 @@ class PlanFormatError(Exception):
 
 
 class DeadlineExceeded(Exception):
-    """전여 대기 시간을 넘김."""
+    """전체 대기 시간을 넘김."""
 
 
 @dataclass(frozen=True)
@@ -260,7 +260,7 @@ def _read_within_deadline(
     now: Callable[[], float],
     on_tick: Callable[[], None] | None = None,
 ) -> bytes:
-    """본문을 읽되 전여 대기 시간을 넘기면 끊는다.
+    """본문을 읽되 전체 대기 시간을 넘기면 끊는다.
 
     requests 의 timeout 인자는 다음 바이트를 기다리는 시간만 재므로, 응답이 조금씩
     천천히 오면 전체 시간이 제한을 넘는다. 그래서 청크마다 시각을 확인한다
@@ -404,7 +404,7 @@ def requests_streamer(
 ) -> tuple[int, Iterator[bytes]]:
     """requests 로 오픈라우터를 부른다.
 
-    stream=True 로 본문을 조금씩 받아 전여 대기 시간을 잴 수 있게 한다. API 키는
+    stream=True 로 본문을 조금씩 받아 전체 대기 시간을 잴 수 있게 한다. API 키는
     헤더에만 넣고 어디에도 기록하지 않는다 (공고 6.3절 8번).
     """
     import requests
