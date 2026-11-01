@@ -21,7 +21,7 @@
 
 ## 3. 고른 해결 방법
 
-공고 3장 표의 7개 기능을 **모두 어려운 해결**로 만들었다.
+공고 3장 표의 8개 기능을 **모두 어려운 해결**로 만들었다.
 
 | 기능 | 고른 것 | 어떻게 |
 | --- | --- | --- |
@@ -31,6 +31,7 @@
 | 마지막 자리에 두 명이 동시에 들어감 | 어려운 해결 | `tf_members` 의 `(team_id, slot_no)` 기본 키와 `student_id` 유일 제약으로 먼저 도착한 학생만 기록 ([`schema.sql`](schema.sql)) |
 | AI 응답이 늦을 때 | 어려운 해결 | 모델마다 **전체** 120초를 재서 끊고 다음 모델로 넘어감 ([`app/ai.py`](app/ai.py) `_read_within_deadline`) |
 | 3차 모델까지 실패 | 어려운 해결 | 2.5절 4항의 검사 다섯 가지를 모두 통과하는 배정을 완전탐색으로 끝까지 찾음 ([`app/flow.py`](app/flow.py) `solve_assignment`) |
+| AI 대기 중 화면 | 어려운 해결 | 몇 차 모델의 응답을 기다리는 중인지와 지난 시간을 `assign_status` 에 보여 줌. 모델을 부를 때 한 번, 그 뒤로는 응답 조각이 올 때마다 고쳐 씀 ([`app/ui/admin.py`](app/ui/admin.py) `on_progress`, [`app/ai.py`](app/ai.py) `_read_within_deadline`) |
 | DB가 일시정지되지 않게 | 어려운 해결 | GitHub Actions 가 매일 DB 에 질의를 보냄 ([`.github/workflows/keepalive.yml`](.github/workflows/keepalive.yml)) |
 
 ### 필수 포함 역할 자리 계산
